@@ -1,20 +1,24 @@
-from machine import Pin
-from _thread import allocate_lock
+import digitalio
 import time
 
 class HX711:
     def __init__(self, dout, pd_sck, gain=128):
-        # Store pin numbers for compatibility
+        # Store pin references for compatibility
         self.PD_SCK = pd_sck
         self.DOUT = dout
 
-        # Pins
-        self.sck = Pin(self.PD_SCK, Pin.OUT, value=0)
-        # HX711 DOUT is open-drain; use pull-up so it idles high when not ready
-        self.dout = Pin(self.DOUT, Pin.IN, pull=Pin.PULL_UP)
+        # Pins - CircuitPython uses digitalio
+        self.sck = digitalio.DigitalInOut(self.PD_SCK)
+        self.sck.direction = digitalio.Direction.OUTPUT
+        self.sck.value = False
 
-        # Mutex (MicroPython)
-        self.readLock = allocate_lock()
+        # HX711 DOUT is open-drain; use pull-up so it idles high when not ready
+        self.dout = digitalio.DigitalInOut(self.DOUT)
+        self.dout.direction = digitalio.Direction.INPUT
+        self.dout.pull = digitalio.Pull.UP
+
+        # Note: CircuitPython doesn't have threading, so no mutex needed
+        # Single-threaded execution model
 
         self.GAIN = 0  # internal gain code (1,2,3 pulses after 24 bits)
         self.REFERENCE_UNIT = 1
@@ -28,7 +32,7 @@ class HX711:
         self.bit_format = 'MSB'
 
         self.set_gain(gain)
-        time.sleep_ms(200)  # settle
+        time.sleep(0.2)  # settle
 
     # ---- Helpers ----
     def convertFromTwosComplement24bit(self, v):
@@ -37,7 +41,7 @@ class HX711:
 
     def is_ready(self):
         # DOUT goes LOW when data is ready
-        return self.dout.value() == 0
+        return not self.dout.value
 
     # ---- Gain/channel ----
     def set_gain(self, gain):
@@ -50,7 +54,7 @@ class HX711:
         else:
             raise ValueError("Unsupported gain: {}".format(gain))
 
-        self.sck.value(0)
+        self.sck.value = False
         # Throw away a first read to latch the new gain/channel
         self.readRawBytes()
 
@@ -60,13 +64,13 @@ class HX711:
     # ---- Bit/Byte I/O ----
     def readNextBit(self):
         # Pulse SCK: rising edge clocks data; sample after we pull it low
-        self.sck.value(1)
-        # Small delay for timing margin
-        time.sleep_us(1)
-        self.sck.value(0)
+        self.sck.value = True
+        # Small delay for timing margin (CircuitPython: use time.sleep with fractional seconds)
+        time.sleep(0.000001)  # 1 microsecond
+        self.sck.value = False
         # Small delay then read
-        time.sleep_us(1)
-        return int(self.dout.value())
+        time.sleep(0.000001)
+        return int(self.dout.value)
 
     def readNextByte(self):
         byteValue = 0
@@ -80,28 +84,25 @@ class HX711:
         return byteValue
 
     def readRawBytes(self):
-        self.readLock.acquire()
-        try:
-            # Wait until data ready
-            while not self.is_ready():
-                # tiny wait prevents hard spinning
-                time.sleep_us(10)
+        # CircuitPython: no threading, so no lock needed
+        # Wait until data ready
+        while not self.is_ready():
+            # tiny wait prevents hard spinning
+            time.sleep(0.00001)  # 10 microseconds
 
-            # Read 3 data bytes
-            b1 = self.readNextByte()
-            b2 = self.readNextByte()
-            b3 = self.readNextByte()
+        # Read 3 data bytes
+        b1 = self.readNextByte()
+        b2 = self.readNextByte()
+        b3 = self.readNextByte()
 
-            # Extra clock pulses select channel/gain
-            for _ in range(self.GAIN):
-                self.readNextBit()
+        # Extra clock pulses select channel/gain
+        for _ in range(self.GAIN):
+            self.readNextBit()
 
-            if self.byte_format == 'LSB':
-                return [b3, b2, b1]
-            else:
-                return [b1, b2, b3]
-        finally:
-            self.readLock.release()
+        if self.byte_format == 'LSB':
+            return [b3, b2, b1]
+        else:
+            return [b1, b2, b3]
 
     # ---- Conversions & Reads ----
     def read_long(self):
@@ -252,21 +253,13 @@ class HX711:
 
     # ---- Power control ----
     def power_down(self):
-        self.readLock.acquire()
-        try:
-            self.sck.value(0)
-            self.sck.value(1)
-            time.sleep_us(80)  # >=60us powers down per datasheet
-        finally:
-            self.readLock.release()
+        self.sck.value = False
+        self.sck.value = True
+        time.sleep(0.00008)  # 80 microseconds (>=60us powers down per datasheet)
 
     def power_up(self):
-        self.readLock.acquire()
-        try:
-            self.sck.value(0)
-            time.sleep_us(100)
-        finally:
-            self.readLock.release()
+        self.sck.value = False
+        time.sleep(0.0001)  # 100 microseconds
 
         # After power up, default is A/128. If not requested, realign.
         if self.get_gain() != 128:
@@ -275,17 +268,3 @@ class HX711:
     def reset(self):
         self.power_down()
         self.power_up()
-
-# Optional: IRQ-style "event detect" (MicroPython replacement)
-def hx711_add_event_detect(hx711_instance, event_callback):
-    """
-    Attach a falling-edge interrupt on DOUT (data ready).
-    The callback will be called with the channel/pin number for compatibility.
-    """
-    def _handler(pin):
-        try:
-            event_callback(hx711_instance.DOUT)
-        except Exception as e:
-            # Avoid raising inside IRQ
-            pass
-    hx711_instance.dout.irq(trigger=Pin.IRQ_FALLING, handler=_handler)

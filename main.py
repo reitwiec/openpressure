@@ -1,14 +1,17 @@
-from machine import Pin
-import time, sys, math
+import board
+import digitalio
+import time
+import sys
+import math
 from hx711 import HX711
 
 # ------------------ Hardware / HX711 ------------------
-DT_PIN = 5
-SCK_PIN = 6
+DT_PIN = board.GP5
+SCK_PIN = board.GP6
 GAIN = 128
 REFERENCE_UNIT = 6504   # placeholder; long-press recalculates
 
-BTN_PIN = 16
+BTN_PIN = board.GP16
 DEBOUNCE_MS = 40
 LONGPRESS_MS = 700
 
@@ -30,20 +33,11 @@ def wire_area_mm2(d_mm):
     r = d_mm * 0.5
     return math.pi * r * r
 
-def _button_irq(pin):
-    global _capture_requested, _last_irq_ms, _pressed_since
-    now = time.ticks_ms()
-    if time.ticks_diff(now, _last_irq_ms) > DEBOUNCE_MS:
-        _capture_requested = True
-        _last_irq_ms = now
-        if _pressed_since is None:
-            _pressed_since = now
-
 def snapshot_weight_g(hx, n=12, inter_ms=4):
     vals = []
     for _ in range(n):
         vals.append(hx.get_weight(1))
-        time.sleep_ms(inter_ms)
+        time.sleep(inter_ms / 1000.0)
     vals.sort()
     if len(vals) >= 5:
         vals = vals[1:-1]
@@ -53,7 +47,7 @@ def snapshot_counts(hx, n=16, inter_ms=4):
     vals = []
     for _ in range(n):
         vals.append(hx.get_value(1))
-        time.sleep_ms(inter_ms)
+        time.sleep(inter_ms / 1000.0)
     vals.sort()
     if len(vals) >= 5:
         vals = vals[1:-1]
@@ -72,24 +66,39 @@ def main():
         sys.exit()
 
     hx = HX711(dout=DT_PIN, pd_sck=SCK_PIN, gain=GAIN)
-    time.sleep_ms(200)
+    time.sleep(0.2)
     hx.set_reference_unit(REFERENCE_UNIT)
 
     print("Taring... remove any load.")
     hx.tare(20)
     print("Tare done.\n")
 
-    btn = Pin(BTN_PIN, Pin.IN, Pin.PULL_UP)
-    btn.irq(trigger=Pin.IRQ_FALLING, handler=_button_irq)
+    btn = digitalio.DigitalInOut(BTN_PIN)
+    btn.direction = digitalio.Direction.INPUT
+    btn.pull = digitalio.Pull.UP
 
     print(f"Wire area: {area:.4f} mm²")
     print("Controls: short press = snapshot   |   long press (≥0.7s) = CALIBRATION\n")
 
+    btn_prev = True
+    
     try:
         while True:
-            now = time.ticks_ms()
+            now = time.monotonic() * 1000  # Convert to milliseconds
+            btn_current = btn.value
+            
+            # Detect button press (falling edge)
+            if btn_prev and not btn_current:
+                if now - _last_irq_ms > DEBOUNCE_MS:
+                    _capture_requested = True
+                    _last_irq_ms = now
+                    if _pressed_since is None:
+                        _pressed_since = now
+            
+            btn_prev = btn_current
+            
             if _pressed_since is not None:
-                if btn.value() == 0 and time.ticks_diff(now, _pressed_since) >= LONGPRESS_MS and not _in_calib:
+                if not btn_current and (now - _pressed_since) >= LONGPRESS_MS and not _in_calib:
                     _capture_requested = False
                     _pressed_since = None
                     _in_calib = True
@@ -102,7 +111,7 @@ def main():
                     hx.tare(25)
                     print("Tare done.")
                     print("Step 2/3: Ensure NO LOAD is on the cell, then press the button.")
-                elif btn.value() == 1:
+                elif btn_current:
                     _pressed_since = None
 
             if _capture_requested:
@@ -134,7 +143,7 @@ def main():
                     snap_stress = snap_g / area
                     print(f">>> SNAPSHOT: {snap_g:.2f} g, {snap_stress:.3f} g/mm²")
 
-            time.sleep_ms(30)
+            time.sleep(0.03)
 
     except KeyboardInterrupt:
         clean_and_exit()
