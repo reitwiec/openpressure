@@ -1,6 +1,14 @@
-# Pressure Monitor
+# Open Pressure Sensing Device
 
-A desktop application for medical pressure monitoring using a KB2040 microcontroller with HX711 load cell.
+Reitwiec Shandilya, Michelle Hui, Sebastian Bidegain, Joey Castillo (Cornell Tech). Carson Gundlach and Dr. David Otterburn (Weill Cornell Medicine)
+
+
+A handheld, open-source instrument designed to measure tactile pressure thresholds digitally. Adapted from clinical tools like the AcroVal™ system, it applies calibrated pressure to the skin and records sensory responses for studies of nerve regeneration following reconstructive surgery.
+
+This project supports the ongoing research of Dr. David Otterburn and Carson Gundlach at Weill Cornell Medicine, whose work in neurotization seeks to restore sensory nerve connections following breast reconstruction surgery. After mastectomy, patients often experience a loss of sensation that affects comfort, safety, and quality of life. Through surgical co-aptation of donor and recipient nerves, Dr. Otterburn’s team aims to re-establish sensory pathways; however, evaluating the success of that process has long relied on subjective or coarse analog tools.
+Developed by Cornell Tech Master’s students Michelle Hui and Reitwiec Shandilya in the Cornell Tech MakerLab, this open-source device captures quantitative measurements of tactile pressure (in g/mm²). By precisely logging patient response data, it allows clinicians to objectively track sensory recovery over time, providing richer, reproducible data than traditional Semmes-Weinstein monofilaments, which only measure at discrete force intervals. Beyond reconstructive surgery, the same sensing tool could inform other clinical neurological testing and research functions, expanding open-source tools for quantifying sensation and nerve function.
+
+The project is supported by the Cornell Tech MakerLab and is undertaken in partnership with the Open Source Hardware Association’s Open Healthware Initiative, with the support of the National Science Foundation. The goal is to create a validated, open-source alternative to proprietary devices such as the AcroVal™ Neurosensory & Motor Testing System, enabling wider adoption of transparent, reproducible clinical instrumentation across research and education.
 
 ![Pressure Monitor](https://img.shields.io/badge/Platform-macOS-blue) ![Electron](https://img.shields.io/badge/Electron-31-green) ![React](https://img.shields.io/badge/React-18-blue)
 
