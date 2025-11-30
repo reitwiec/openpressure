@@ -1,3 +1,22 @@
+"""
+Pressure Monitor Firmware for KB2040 + HX711
+============================================
+
+This firmware reads pressure from an HX711 load cell and sends readings
+to the Pressure Monitor desktop application via USB serial.
+
+Hardware Setup:
+- KB2040 microcontroller
+- HX711 load cell amplifier
+  - DT (Data) -> GP5
+  - SCK (Clock) -> GP6
+- Button -> GP16 (with internal pull-up)
+
+Button Controls:
+- Short press: Take a snapshot reading
+- Long press (≥0.7s): Enter calibration mode
+"""
+
 import board
 import digitalio
 import time
@@ -9,17 +28,17 @@ from hx711 import HX711
 DT_PIN = board.GP5
 SCK_PIN = board.GP6
 GAIN = 128
-REFERENCE_UNIT = 6504   # placeholder; long-press recalculates
+REFERENCE_UNIT = 6504   # Default; will be recalculated during calibration
 
 BTN_PIN = board.GP16
 DEBOUNCE_MS = 40
 LONGPRESS_MS = 700
 
 # ------------------ Wire geometry ------------------
-WIRE_DIAMETER_MM = 0.7  # round wire Ø (mm)
+WIRE_DIAMETER_MM = 0.7  # Default round wire Ø (mm)
 
 # ------------------ Calibration mass (grams) ------------------
-CAL_MASS_G = 41.0
+CAL_MASS_G = 41.0  # Default calibration mass
 
 # ------------------ Internal state ------------------
 _capture_requested = False
@@ -29,33 +48,42 @@ _in_calib = False
 _calib_step = 0
 _calib_pre = None
 
+
 def wire_area_mm2(d_mm):
+    """Calculate cross-sectional area of round wire."""
     r = d_mm * 0.5
     return math.pi * r * r
 
+
 def snapshot_weight_g(hx, n=12, inter_ms=4):
+    """Take multiple readings and return trimmed mean weight in grams."""
     vals = []
     for _ in range(n):
         vals.append(hx.get_weight(1))
         time.sleep(inter_ms / 1000.0)
     vals.sort()
     if len(vals) >= 5:
-        vals = vals[1:-1]
+        vals = vals[1:-1]  # Trim outliers
     return sum(vals) / len(vals)
 
+
 def snapshot_counts(hx, n=16, inter_ms=4):
+    """Take multiple readings and return trimmed mean raw counts."""
     vals = []
     for _ in range(n):
         vals.append(hx.get_value(1))
         time.sleep(inter_ms / 1000.0)
     vals.sort()
     if len(vals) >= 5:
-        vals = vals[1:-1]
+        vals = vals[1:-1]  # Trim outliers
     return sum(vals) / len(vals)
 
+
 def clean_and_exit():
+    """Clean shutdown."""
     print("Bye!")
     sys.exit()
+
 
 def main():
     global _capture_requested, _pressed_since, _in_calib, _calib_step, _calib_pre, REFERENCE_UNIT
@@ -65,6 +93,7 @@ def main():
         print("Invalid wire diameter/area.")
         sys.exit()
 
+    # Initialize HX711
     hx = HX711(dout=DT_PIN, pd_sck=SCK_PIN, gain=GAIN)
     time.sleep(0.2)
     hx.set_reference_unit(REFERENCE_UNIT)
@@ -73,12 +102,14 @@ def main():
     hx.tare(20)
     print("Tare done.\n")
 
+    # Initialize button
     btn = digitalio.DigitalInOut(BTN_PIN)
     btn.direction = digitalio.Direction.INPUT
     btn.pull = digitalio.Pull.UP
 
     print(f"Wire area: {area:.4f} mm²")
     print("Controls: short press = snapshot   |   long press (≥0.7s) = CALIBRATION\n")
+    print("READY")  # Signal to desktop app that device is ready
 
     btn_prev = True
     
@@ -97,8 +128,10 @@ def main():
             
             btn_prev = btn_current
             
+            # Handle button timing and long press detection
             if _pressed_since is not None:
                 if not btn_current and (now - _pressed_since) >= LONGPRESS_MS and not _in_calib:
+                    # Long press detected - enter calibration mode
                     _capture_requested = False
                     _pressed_since = None
                     _in_calib = True
@@ -114,9 +147,12 @@ def main():
                 elif btn_current:
                     _pressed_since = None
 
+            # Handle capture requests
             if _capture_requested:
                 _capture_requested = False
+                
                 if _in_calib:
+                    # Calibration mode
                     if _calib_step == 0:
                         _calib_pre = snapshot_counts(hx)
                         print(f"Captured zero-load counts: {_calib_pre:.0f}")
@@ -139,14 +175,17 @@ def main():
                         _calib_step = 0
                         _calib_pre = None
                 else:
+                    # Normal reading mode
                     snap_g = abs(snapshot_weight_g(hx))
                     snap_stress = snap_g / area
+                    # This format is parsed by the desktop app
                     print(f">>> SNAPSHOT: {snap_g:.2f} g, {snap_stress:.3f} g/mm²")
 
             time.sleep(0.03)
 
     except KeyboardInterrupt:
         clean_and_exit()
+
 
 if __name__ == "__main__":
     main()
